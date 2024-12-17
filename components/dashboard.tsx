@@ -65,13 +65,25 @@ export const Dashboard: React.FC<DashboardProps> = ({ data }) => {
             </CardContent>
         </Card>
     );
-
-    const CustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name, value }: any) => {
+    
+    interface CustomLabelProps {
+        cx: number;
+        cy: number;
+        midAngle: number;
+        innerRadius: number;
+        outerRadius: number;
+        percent: number;
+        index: number;
+        name: string;
+        value: number;
+    }
+    
+    const CustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent, name, value }: CustomLabelProps) => {
         const RADIAN = Math.PI / 180;
         const radius = innerRadius + (outerRadius - innerRadius) * 1.6;
         const x = cx + radius * Math.cos(-midAngle * RADIAN);
         const y = cy + radius * Math.sin(-midAngle * RADIAN);
-
+    
         return (
             <text 
                 x={x} 

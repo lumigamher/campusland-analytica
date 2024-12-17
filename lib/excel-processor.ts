@@ -1,13 +1,15 @@
 import * as XLSX from 'xlsx';
 import { AnalysisResult } from '../types';
 
+interface ChatUser {
+    'User ID': number;
+    'Phone Number': string | number;
+    Username: string;
+}
+
 interface ChatData {
-    chat: any[];
-    users: {
-        'User ID': number;
-        'Phone Number': string | number;
-        Username: string;
-    }[];
+    chat: unknown[];
+    users: ChatUser[];
 }
 
 interface StudentData {
@@ -32,7 +34,7 @@ export const processExcelFiles = async (
     estBucaFile: File,
     estBogFile: File
 ): Promise<AnalysisResult> => {
-    const readExcelFile = async (file: File, isChat: boolean = false) => {
+    const readExcelFile = async (file: File, isChat: boolean = false): Promise<ChatData | StudentData[]> => {
         try {
             const buffer = await file.arrayBuffer();
             const workbook = XLSX.read(buffer, {
@@ -42,16 +44,11 @@ export const processExcelFiles = async (
             });
 
             if (isChat) {
-                // Para archivos de chat, necesitamos ambas hojas
-                if (workbook.SheetNames.length < 2) {
-                    throw new Error('El archivo de chat debe contener dos hojas');
-                }
                 return {
                     chat: XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]),
-                    users: XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[1]])
-                } as ChatData;
+                    users: XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[1]]) as ChatUser[]
+                };
             } else {
-                // Para archivos de estudiantes, solo necesitamos la primera hoja
                 return XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]) as StudentData[];
             }
         } catch (error) {
@@ -63,34 +60,34 @@ export const processExcelFiles = async (
     try {
         // Leer todos los archivos
         const [chatBuca, chatBog, estBuca, estBog] = await Promise.all([
-            readExcelFile(chatBucaFile, true),
-            readExcelFile(chatBogFile, true),
-            readExcelFile(estBucaFile, false),
-            readExcelFile(estBogFile, false)
+            readExcelFile(chatBucaFile, true) as Promise<ChatData>,
+            readExcelFile(chatBogFile, true) as Promise<ChatData>,
+            readExcelFile(estBucaFile) as Promise<StudentData[]>,
+            readExcelFile(estBogFile) as Promise<StudentData[]>
         ]);
 
         // Procesar teléfonos del chat
         const telefonosChatBuca = new Set(
-            (chatBuca as ChatData).users
+            chatBuca.users
                 .map(u => normalizarTelefono(u['Phone Number']))
                 .filter((t): t is string => t !== null)
         );
 
         const telefonosChatBog = new Set(
-            (chatBog as ChatData).users
+            chatBog.users
                 .map(u => normalizarTelefono(u['Phone Number']))
                 .filter((t): t is string => t !== null)
         );
 
         // Procesar teléfonos de estudiantes
         const telefonosRegBuca = new Set(
-            (estBuca as StudentData[])
+            estBuca
                 .map(e => normalizarTelefono(e.Celular))
                 .filter((t): t is string => t !== null)
         );
 
         const telefonosRegBog = new Set(
-            (estBog as StudentData[])
+            estBog
                 .map(e => normalizarTelefono(e.Celular))
                 .filter((t): t is string => t !== null)
         );
@@ -115,32 +112,31 @@ export const processExcelFiles = async (
                 }, {});
         };
 
-        const estadosBuca = getEstados(estBuca as StudentData[], coincidenciasBuca);
-        const estadosBog = getEstados(estBog as StudentData[], coincidenciasBog);
+        const estadosBuca = getEstados(estBuca, coincidenciasBuca);
+        const estadosBog = getEstados(estBog, coincidenciasBog);
 
-        // Construir resultado
         return {
             bucaramanga: {
-                chatUsers: (chatBuca as ChatData).users.length,
+                chatUsers: chatBuca.users.length,
                 validPhones: telefonosChatBuca.size,
-                registros: (estBuca as StudentData[]).length,
+                registros: estBuca.length,
                 conversiones: coincidenciasBuca.length,
                 tasaConversion: (coincidenciasBuca.length / telefonosChatBuca.size) * 100,
                 estados: estadosBuca
             },
             bogota: {
-                chatUsers: (chatBog as ChatData).users.length,
+                chatUsers: chatBog.users.length,
                 validPhones: telefonosChatBog.size,
-                registros: (estBog as StudentData[]).length,
+                registros: estBog.length,
                 conversiones: coincidenciasBog.length,
                 tasaConversion: (coincidenciasBog.length / telefonosChatBog.size) * 100,
                 estados: estadosBog
             },
             global: {
-                totalChatUsers: (chatBuca as ChatData).users.length + (chatBog as ChatData).users.length,
+                totalChatUsers: chatBuca.users.length + chatBog.users.length,
                 totalValidPhones: telefonosChatBuca.size + telefonosChatBog.size,
                 totalConversiones: coincidenciasBuca.length + coincidenciasBog.length,
-                totalRegistros: (estBuca as StudentData[]).length + (estBog as StudentData[]).length,
+                totalRegistros: estBuca.length + estBog.length,
                 tasaConversionGlobal: ((coincidenciasBuca.length + coincidenciasBog.length) / 
                     (telefonosChatBuca.size + telefonosChatBog.size)) * 100
             }
