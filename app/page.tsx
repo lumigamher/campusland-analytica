@@ -4,7 +4,6 @@ import React, { useState, useEffect } from "react";
 import dynamic from "next/dynamic";
 import { UploadForm } from "../components/upload-form";
 import type { AnalysisResult } from "../types";
-import { useSearchParams, useRouter } from 'next/navigation';
 
 const Dashboard = dynamic(() => import('../components/dashboard'), {
     ssr: false
@@ -14,22 +13,21 @@ export default function Home() {
     const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [shareUrl, setShareUrl] = useState<string>('');
-    const router = useRouter();
-    const searchParams = useSearchParams();
+    const [uniqueId, setUniqueId] = useState<string | null>(null);
 
     useEffect(() => {
-        // Intentar cargar datos del URL si existen
-        const data = searchParams.get('data');
-        if (data) {
+        // Intentar cargar datos del localStorage
+        const savedData = localStorage.getItem('dashboardData');
+        if (savedData) {
             try {
-                const decodedData = JSON.parse(atob(data));
-                setAnalysisResult(decodedData);
+                const parsedData = JSON.parse(savedData);
+                setAnalysisResult(parsedData.data);
+                setUniqueId(parsedData.id);
             } catch (err) {
-                console.error('Error al cargar datos:', err);
+                console.error('Error al cargar datos guardados:', err);
             }
         }
-    }, [searchParams]);
+    }, []);
 
     const handleFilesSelected = async (files: {
         chatBuca: File;
@@ -47,15 +45,19 @@ export default function Home() {
                 files.estBuca,
                 files.estBog
             );
+            
+            // Generar ID único
+            const newId = Math.random().toString(36).substring(2) + Date.now().toString(36);
+            
+            // Guardar en localStorage
+            localStorage.setItem('dashboardData', JSON.stringify({
+                id: newId,
+                data: result
+            }));
+
             setAnalysisResult(result);
+            setUniqueId(newId);
 
-            // Crear URL compartible
-            const encodedData = btoa(JSON.stringify(result));
-            const url = `${window.location.origin}?data=${encodedData}`;
-            setShareUrl(url);
-
-            // Actualizar URL
-            router.push(`?data=${encodedData}`);
         } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Error al procesar los archivos';
             setError(errorMessage);
@@ -65,12 +67,15 @@ export default function Home() {
         }
     };
 
-    const copyShareUrl = async () => {
-        try {
-            await navigator.clipboard.writeText(shareUrl);
-            alert('URL copiada al portapapeles');
-        } catch (err) {
-            console.error('Error al copiar URL:', err);
+    const handleShare = async () => {
+        if (uniqueId) {
+            const url = `${window.location.origin}/dashboard/${uniqueId}`;
+            try {
+                await navigator.clipboard.writeText(url);
+                alert('URL copiada al portapapeles. Puedes compartir este enlace para ver el dashboard.');
+            } catch (err) {
+                alert('La URL para compartir es: ' + url);
+            }
         }
     };
 
@@ -88,14 +93,26 @@ export default function Home() {
                 </div>
             ) : (
                 <div>
-                    <div className="mb-6 flex justify-end">
-                        <button
-                            onClick={copyShareUrl}
-                            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
-                        >
-                            Compartir Dashboard
-                        </button>
-                    </div>
+                    {uniqueId && (
+                        <div className="mb-6 flex justify-end gap-4">
+                            <button
+                                onClick={handleShare}
+                                className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors"
+                            >
+                                Compartir Dashboard
+                            </button>
+                            <button
+                                onClick={() => {
+                                    localStorage.removeItem('dashboardData');
+                                    setAnalysisResult(null);
+                                    setUniqueId(null);
+                                }}
+                                className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700 transition-colors"
+                            >
+                                Nuevo Análisis
+                            </button>
+                        </div>
+                    )}
                     <Dashboard data={analysisResult} />
                 </div>
             )}
