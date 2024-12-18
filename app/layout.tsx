@@ -2,16 +2,11 @@ import React from 'react';
 import './globals.css';
 
 const metadata = {
-  title: 'Dashboard de Conversión ChatBot',
-  description: 'Análisis de conversión del ChatBot a registros',
-  keywords: ['dashboard', 'chatbot', 'analytics', 'conversión', 'CampusLand'],
+  title: 'Informe ISA - Asistente Virtual CampusLand',
+  description: 'Análisis de conversión y métricas del Asistente Virtual ISA',
+  keywords: ['ISA', 'chatbot', 'analytics', 'conversión', 'CampusLand', 'asistente virtual'],
   authors: [{ name: 'CampusLand' }],
   viewport: 'width=device-width, initial-scale=1',
-  robots: 'index, follow',
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: 'white' },
-    { media: '(prefers-color-scheme: dark)', color: '#000' },
-  ],
 };
 
 export { metadata };
