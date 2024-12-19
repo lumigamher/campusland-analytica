@@ -4,14 +4,28 @@ import { LucideIcon } from 'lucide-react';
 export interface UserData {
     userId: number;
     nombre: string;
-    edad?: number | null;
+    edad: number | null;
     celular: string;
     fecha: string;
-    fechaRegistro?: string;
-    estado?: string;
     ciudad: string;
     registrado: boolean;
+    estado: string | null;
+    fechaRegistro?: string;
 }
+
+export interface ChatUser {
+    'User ID': number;
+    'Username': string;
+    'Phone Number': string | number;
+    'Age': number | null;
+    'Time': string;
+}
+
+export interface ChatData {
+    chat: any[];  // Si no necesitamos los datos del chat por ahora
+    users: ChatUser[];
+}
+
 
 export interface UserFilter {
     fechaInicio?: string | Date;
@@ -20,21 +34,7 @@ export interface UserFilter {
     estado?: string;
 }
 
-export interface ChatData {
-    chat: {
-        'User ID': number;
-        'Message': string;
-        'ID': number;
-        'Time': string;
-    }[];
-    users: {
-        'User ID': number;
-        'Username': string;
-        'Phone Number': string | number;
-        'Age'?: number;
-        'Time': string;
-    }[];
-}
+
 
 export interface StudentData {
     Nombre: string;
@@ -140,6 +140,11 @@ export interface ChartData {
     color?: string;
 }
 
+export interface ChartDataPoint {
+    name: string;
+    value: number;
+  }
+
 export interface ConversionChartProps {
     data: {
         ciudad: string;
@@ -158,6 +163,13 @@ export interface TimeSeriesChartProps {
     data: DailyStats[];
     title: string;
 }
+
+export interface TimeSeriesDataPoint {
+    fecha: string;
+    usuarios: number;
+    interacciones: number;
+    conversion: number;
+  }
 
 export interface CustomLabelProps {
     cx: number;

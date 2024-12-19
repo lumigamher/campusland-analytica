@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import type { AnalysisResult, UserData, UserFilter } from '../types';
+import type { AnalysisResult, UserFilter } from '../types';
 
 export const useStats = (data: AnalysisResult) => {
     const [filters, setFilters] = useState<UserFilter>({

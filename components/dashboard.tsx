@@ -1,27 +1,27 @@
-'use client';
-
 import React, { Suspense, useMemo } from 'react';
 import { Users, MessageSquare, UserCheck, Calendar } from 'lucide-react';
-import { Card, CardContent } from '../components/ui/card';
+import { Card, CardContent } from './ui/card';
 import { ExportButton } from './export-button';
 import { Filters } from './filters';
 import { useStats } from './stats';
 import { DashboardProps, MetricCardProps } from '../types';
 import dynamic from 'next/dynamic';
+import { UserTable } from '../components/user-table';
+
 
 // Importaciones dinámicas corregidas
 const ConversionChart = dynamic(
-  () => import('@/components/charts/conversion-chart').then(mod => mod.default), 
+  () => import('./charts/conversion-chart'), 
   { ssr: false }
 );
 
 const StatusPieChart = dynamic(
-  () => import('@/components/charts/status-pie-chart').then(mod => mod.default), 
+  () => import('./charts/status-pie-chart'), 
   { ssr: false }
 );
 
 const TimeSeriesChart = dynamic(
-  () => import('@/components/charts/time-series-chart').then(mod => mod.default), 
+  () => import('./charts/time-series-chart'), 
   { ssr: false }
 );
 
@@ -67,7 +67,7 @@ export default function Dashboard({ data }: DashboardProps) {
         updateFilters({ estado: status === 'todos' ? undefined : status });
     };
 
-    // Memoizar los datos transformados
+    // Datos para el gráfico de conversión
     const conversionData = useMemo(() => [
         {
             ciudad: 'Bucaramanga',
@@ -83,31 +83,61 @@ export default function Dashboard({ data }: DashboardProps) {
         }
     ], [data]);
 
+    // Datos para los gráficos de estado
     const bucaStatusData = useMemo(() => 
         Object.entries(data.bucaramanga.estados).map(([name, value]) => ({
             name,
-            value
-        }))
+            value: Number(value) // Asegurarse de que el valor es numérico
+        })).filter(item => item.value > 0) // Filtrar valores cero
     , [data.bucaramanga.estados]);
 
     const bogStatusData = useMemo(() => 
         Object.entries(data.bogota.estados).map(([name, value]) => ({
             name,
-            value
-        }))
+            value: Number(value) // Asegurarse de que el valor es numérico
+        })).filter(item => item.value > 0) // Filtrar valores cero
     , [data.bogota.estados]);
-
+    
     const today = new Date().toISOString().split('T')[0];
     const lastMonth = new Date();
     lastMonth.setMonth(lastMonth.getMonth() - 1);
 
-    const todayUsers = useMemo(() => 
-        filteredData.filter(user => user.fecha.startsWith(today))
-    , [filteredData, today]);
+    const todayUsers = useMemo(() => {
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        
+        return filteredData
+            .filter(user => {
+                const userDate = new Date(user.fecha);
+                return userDate >= startOfDay;
+            })
+            .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+    }, [filteredData]);
 
-    const monthUsers = useMemo(() => 
-        filteredData.filter(user => new Date(user.fecha) >= lastMonth)
-    , [filteredData, lastMonth]);
+    const timeSeriesChart = useMemo(() => {
+        // Verificar que tenemos los datos necesarios
+        if (!data.global.dailyStats) return [];
+    
+        return data.global.dailyStats.map(stat => ({
+            fecha: stat.fecha,
+            usuariosUnicos: stat.usuariosUnicos || 0,
+            totalInteracciones: stat.totalInteracciones || 0,
+            tasaConversion: parseFloat((stat.tasaConversion || 0).toFixed(2))
+        }));
+    }, [data.global.dailyStats]);
+    
+    const monthUsers = useMemo(() => {
+        const startOfMonth = new Date();
+        startOfMonth.setMonth(startOfMonth.getMonth() - 1);
+        startOfMonth.setHours(0, 0, 0, 0);
+        
+        return filteredData
+            .filter(user => {
+                const userDate = new Date(user.fecha);
+                return userDate >= startOfMonth;
+            })
+            .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+    }, [filteredData]);
 
     return (
         <div className="p-4 md:p-8 bg-gray-50 min-h-screen">
@@ -140,7 +170,7 @@ export default function Dashboard({ data }: DashboardProps) {
                 <MetricCard
                     title="Conversiones"
                     value={data.global.totalConversiones}
-                    change={`${data.global.tasaConversionGlobal.toFixed(1)}%`}
+                    change={`${data.global.tasaConversionGlobal}%`}
                     icon={UserCheck}
                     trend="up"
                 />
@@ -164,7 +194,7 @@ export default function Dashboard({ data }: DashboardProps) {
                     <Suspense fallback={<LoadingChart />}>
                         <div className="w-full">
                             <StatusPieChart 
-                                data={getBucaStatusData} 
+                                data={bucaStatusData} 
                                 title="Estados en Bucaramanga" 
                             />
                         </div>
@@ -172,7 +202,7 @@ export default function Dashboard({ data }: DashboardProps) {
                     <Suspense fallback={<LoadingChart />}>
                         <div className="w-full">
                             <StatusPieChart 
-                                data={getBogStatusData} 
+                                data={bogStatusData} 
                                 title="Estados en Bogotá" 
                             />
                         </div>
@@ -183,7 +213,7 @@ export default function Dashboard({ data }: DashboardProps) {
             <Suspense fallback={<LoadingChart />}>
                 <div className="w-full">
                     <TimeSeriesChart
-                        data={data.global.dailyStats}
+                        data={timeSeriesChart}
                         title="Evolución Diaria de Usuarios"
                     />
                 </div>
@@ -191,16 +221,24 @@ export default function Dashboard({ data }: DashboardProps) {
 
             <div className="space-y-8 mt-8">
                 <Card>
-                    <CardContent>
+                    <CardContent className="p-6">
                         <h3 className="text-xl font-semibold mb-4">Usuarios del Día ({todayUsers.length})</h3>
-                        {/* UserTable Component aquí */}
+                        <UserTable 
+                            users={todayUsers}
+                            title="Usuarios del Día"
+                            description="Usuarios que han interactuado hoy con el asistente"
+                        />
                     </CardContent>
                 </Card>
                 
                 <Card>
-                    <CardContent>
+                    <CardContent className="p-6">
                         <h3 className="text-xl font-semibold mb-4">Usuarios del Mes ({monthUsers.length})</h3>
-                        {/* UserTable Component aquí */}
+                        <UserTable 
+                            users={monthUsers}
+                            title="Usuarios del Mes"
+                            description="Usuarios que han interactuado en el último mes"
+                        />
                     </CardContent>
                 </Card>
             </div>

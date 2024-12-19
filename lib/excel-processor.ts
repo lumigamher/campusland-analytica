@@ -11,15 +11,6 @@ import {
     GlobalAnalysis
 } from '../types';
 
-const normalizarTelefono = (telefono: string | number | null): string | null => {
-    if (!telefono) return null;
-    let numero = telefono.toString().replace(/\D/g, '');
-    if (numero.startsWith('57')) {
-        numero = numero.substring(2);
-    }
-    return numero.length === 10 && numero.startsWith('3') ? numero : null;
-};
-
 const formatearFecha = (fecha: string | number | Date): string => {
     try {
         if (typeof fecha === 'number') {
@@ -46,23 +37,75 @@ const formatearFecha = (fecha: string | number | Date): string => {
     }
 };
 
-const procesarUsuarios = (chatData: ChatData, ciudad: string): UserData[] => {
-    return chatData.users.map(user => {
-        try {
+const normalizarTelefono = (telefono: string | number | null): string | null => {
+    if (!telefono) return null;
+    
+    // Convertir a string y eliminar todo lo que no sea número
+    let numero = telefono.toString().replace(/\D/g, '');
+    
+    // Si empieza con 57, lo removemos
+    if (numero.startsWith('57')) {
+        numero = numero.substring(2);
+    }
+    
+    // Si no empieza con 3 o no tiene 10 dígitos, no es un celular válido
+    if (!numero.startsWith('3') || numero.length !== 10) {
+        console.log('Número inválido:', telefono, '-> normalizado:', numero);
+        return null;
+    }
+    
+    return numero;
+};
+
+const readExcelFile = async (file: File): Promise<ChatData | StudentData[]> => {
+    try {
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, {
+            cellDates: true,
+            type: 'array'
+        });
+
+        console.log('Procesando archivo:', file.name);
+        console.log('Hojas disponibles:', workbook.SheetNames);
+
+        if (file.name.toLowerCase().includes('informecampi')) {
+            const sheetName = workbook.SheetNames[1];
+            if (!sheetName) {
+                throw new Error('No se encontró la hoja de usuarios en el archivo informecampi');
+            }
+
+            const users = XLSX.utils.sheet_to_json<Record<string, any>>(workbook.Sheets[sheetName]);
+            console.log(`Datos encontrados en ${file.name}:`, users.length);
+
             return {
-                userId: user['User ID'],
-                nombre: user['Username'],
-                edad: typeof user['Age'] === 'number' ? user['Age'] : null,
-                celular: normalizarTelefono(user['Phone Number']) || '',
-                fecha: formatearFecha(user['Time']),
-                ciudad,
-                registrado: false
-            } as UserData;
-        } catch (error) {
-            console.error('Error al procesar usuario:', user, error);
-            return null;
+                chat: [],
+                users: users.map(user => ({
+                    'User ID': Number(user['User ID']) || 0,
+                    'Username': String(user['Username'] || user['nombre'] || ''),
+                    'Phone Number': String(user['Phone Number'] || user['celular'] || ''),
+                    'Age': typeof user['Age'] === 'number' ? user['Age'] : 
+                          typeof user['edad'] === 'number' ? user['edad'] : null,
+                    'Time': user['Time'] || user['fecha'] || new Date().toISOString()
+                }))
+            };
+        } else if (file.name.toLowerCase().includes('estudiantes')) {
+            const sheetName = workbook.SheetNames[0];
+            const students = XLSX.utils.sheet_to_json<Record<string, any>>(workbook.Sheets[sheetName]);
+            console.log(`Datos encontrados en ${file.name}:`, students.length);
+
+            return students.map(student => ({
+                Nombre: String(student['Nombre'] || ''),
+                Celular: String(student['Celular'] || ''),
+                Estado: String(student['Estado'] || ''),
+                'Fecha registro': student['Fecha registro'] || new Date().toISOString()
+            })) satisfies StudentData[];
         }
-    }).filter((user): user is UserData => user !== null);
+
+        throw new Error('Formato de archivo no reconocido');
+    } catch (error) {
+        console.error('Error al leer archivo Excel:', file.name, error);
+        throw error;
+    }
 };
 
 const calcularEstadisticas = (usuarios: UserData[]): ProcessedStats => {
@@ -138,46 +181,93 @@ const calcularEstadisticas = (usuarios: UserData[]): ProcessedStats => {
     };
 };
 
-const procesarCiudad = (
-    usuarios: UserData[],
-    estudiantes: StudentData[]
-): CityAnalysis => {
-    const telefonosRegistrados = new Set(
-        estudiantes.map(e => normalizarTelefono(e.Celular)).filter(Boolean)
+const procesarUsuarios = (chatData: ChatData, ciudad: string): UserData[] => {
+    if (!chatData?.users?.length) {
+        console.warn(`No se encontraron usuarios para ${ciudad}`);
+        return [];
+    }
+
+    return chatData.users
+        .map(user => {
+            try {
+                const celular = normalizarTelefono(user['Phone Number']);
+                
+                if (!celular) {
+                    console.log('Usuario sin celular válido:', user);
+                    return null;
+                }
+
+                const userData: UserData = {
+                    userId: Number(user['User ID']) || 0,
+                    nombre: String(user['Username'] || '').trim(),
+                    edad: typeof user['Age'] === 'number' ? user['Age'] : null,
+                    celular,
+                    fecha: formatearFecha(user['Time']),
+                    ciudad,
+                    registrado: false,
+                    estado: null
+                };
+
+                return userData;
+            } catch (error) {
+                console.error('Error procesando usuario:', user, error);
+                return null;
+            }
+        })
+        .filter((user): user is UserData => user !== null);
+};
+
+const procesarCiudad = (usuarios: UserData[], estudiantes: StudentData[]): CityAnalysis => {
+    console.log(`Procesando ciudad con ${usuarios.length} usuarios y ${estudiantes.length} estudiantes`);
+    
+    // Normalizar teléfonos de estudiantes una sola vez
+    const estudiantesMap = new Map(
+        estudiantes
+            .map(est => {
+                const celular = normalizarTelefono(est.Celular);
+                return celular ? [celular, est] : null;
+            })
+            .filter((x): x is [string, StudentData] => x !== null)
     );
 
-    // Marcar usuarios registrados y asignar estados
+    console.log(`Estudiantes con celular válido: ${estudiantesMap.size}`);
+
+    // Marcar usuarios registrados
     usuarios.forEach(user => {
-        if (user.celular && telefonosRegistrados.has(user.celular)) {
+        if (!user.celular) return;
+        
+        const estudiante = estudiantesMap.get(user.celular);
+        if (estudiante) {
             user.registrado = true;
-            const estudiante = estudiantes.find(e => 
-                normalizarTelefono(e.Celular) === user.celular
-            );
-            if (estudiante) {
-                user.estado = estudiante.Estado;
-                try {
-                    user.fechaRegistro = formatearFecha(estudiante['Fecha registro']);
-                } catch (error) {
-                    console.warn('Error al formatear fecha de registro:', estudiante['Fecha registro']);
-                }
+            user.estado = estudiante.Estado;
+            try {
+                user.fechaRegistro = formatearFecha(estudiante['Fecha registro']);
+            } catch (error) {
+                console.warn('Error al formatear fecha de registro:', error);
             }
         }
     });
 
+    const usuariosRegistrados = usuarios.filter(u => u.registrado);
+    console.log(`Usuarios registrados encontrados: ${usuariosRegistrados.length}`);
+
     const stats = calcularEstadisticas(usuarios);
-    const estados = estudiantes.reduce((acc: Record<string, number>, e) => {
-        const estado = e.Estado || 'Sin Estado';
+    
+    // Conteo de estados
+    const estados = Array.from(estudiantesMap.values()).reduce((acc, est) => {
+        const estado = est.Estado || 'Sin Estado';
         acc[estado] = (acc[estado] || 0) + 1;
         return acc;
-    }, {});
+    }, {} as Record<string, number>);
 
     return {
         chatUsers: usuarios.length,
         validPhones: usuarios.filter(u => u.celular).length,
         registros: estudiantes.length,
-        conversiones: usuarios.filter(u => u.registrado).length,
-        tasaConversion: usuarios.length > 0 ? 
-            (usuarios.filter(u => u.registrado).length / usuarios.length) * 100 : 0,
+        conversiones: usuariosRegistrados.length,
+        tasaConversion: usuarios.length > 0 
+            ? (usuariosRegistrados.length / usuarios.length) * 100 
+            : 0,
         estados,
         dailyStats: stats.daily,
         monthlyStats: stats.monthly,
@@ -191,38 +281,6 @@ export const processExcelFiles = async (
     estBucaFile: File,
     estBogFile: File
 ): Promise<AnalysisResult> => {
-    const readExcelFile = async (file: File): Promise<ChatData | StudentData[]> => {
-        try {
-            const buffer = await file.arrayBuffer();
-            const workbook = XLSX.read(buffer, {
-                cellDates: true,
-                dateNF: 'yyyy-mm-dd hh:mm:ss',
-                cellNF: true,
-                cellText: false
-            });
-
-            if (file.name.toLowerCase().includes('informe')) {
-                const chat = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {
-                    raw: false,
-                    dateNF: 'yyyy-mm-dd hh:mm:ss'
-                }) as ChatData['chat'];
-                const users = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[1]], {
-                    raw: false,
-                    dateNF: 'yyyy-mm-dd hh:mm:ss'
-                }) as ChatData['users'];
-                return { chat, users };
-            } else {
-                return XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {
-                    raw: false,
-                    dateNF: 'yyyy-mm-dd'
-                }) as StudentData[];
-            }
-        } catch (error) {
-            console.error('Error al leer archivo Excel:', error, file.name);
-            throw new Error(`Error al procesar el archivo ${file.name}: ${error.message}`);
-        }
-    };
-
     try {
         const [chatBuca, chatBog, estBuca, estBog] = await Promise.all([
             readExcelFile(chatBucaFile) as Promise<ChatData>,
