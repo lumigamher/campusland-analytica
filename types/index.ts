@@ -178,6 +178,13 @@ export interface BarChartCustomLabelProps {
     value: number;
 }
 
+export interface ConversionData {
+    ciudad: string;
+    usuarios: number;
+    telefonos: number;
+    conversiones: number;
+  }
+
 // Interfaces de Procesamiento
 export interface ProcessedStats {
     daily: DailyStats[];
@@ -223,6 +230,7 @@ export interface ExportButtonProps {
     data: AnalysisResult;
 }
 
+// Interfaces para el Context y Hooks
 export interface StatsContextData {
     filteredData: UserData[];
     stats: {
@@ -240,20 +248,4 @@ export interface StatsContextData {
     updateFilters: (newFilters: Partial<UserFilter>) => void;
 }
 
-// Hook types
-export interface UseStats {
-    filteredData: UserData[];
-    stats: {
-        total: number;
-        registrados: number;
-        noRegistrados: number;
-        tasaConversion: number;
-        porCiudad: {
-            bucaramanga: number;
-            bogota: number;
-        };
-        porEstado: Record<string, number>;
-    };
-    filters: UserFilter;
-    updateFilters: (newFilters: Partial<UserFilter>) => void;
-}
+export interface UseStats extends StatsContextData {}

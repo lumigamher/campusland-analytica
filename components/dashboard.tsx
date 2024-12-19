@@ -1,15 +1,35 @@
 'use client';
 
-import React from 'react';
+import React, { Suspense, useMemo } from 'react';
 import { Users, MessageSquare, UserCheck, Calendar } from 'lucide-react';
 import { Card, CardContent } from '../components/ui/card';
 import { ExportButton } from './export-button';
 import { Filters } from './filters';
 import { useStats } from './stats';
+import { DashboardProps, MetricCardProps } from '../types';
+import dynamic from 'next/dynamic';
 
+// Importaciones dinámicas corregidas
+const ConversionChart = dynamic(
+  () => import('@/components/charts/conversion-chart').then(mod => mod.default), 
+  { ssr: false }
+);
 
-// MetricCard component definition
-const MetricCard = ({ title, value, change, icon: Icon, trend }) => {
+const StatusPieChart = dynamic(
+  () => import('@/components/charts/status-pie-chart').then(mod => mod.default), 
+  { ssr: false }
+);
+
+const TimeSeriesChart = dynamic(
+  () => import('@/components/charts/time-series-chart').then(mod => mod.default), 
+  { ssr: false }
+);
+
+const LoadingChart = () => (
+  <div className="w-full h-64 bg-gray-100 animate-pulse rounded-lg" />
+);
+
+const MetricCard = ({ title, value, change, icon: Icon, trend }: MetricCardProps) => {
   return (
     <Card>
       <CardContent className="p-6">
@@ -28,54 +48,27 @@ const MetricCard = ({ title, value, change, icon: Icon, trend }) => {
   );
 };
 
-// Chart components
-const ConversionChart = ({ data }) => (
-  <Card>
-    <CardContent className="p-6">
-      <h3 className="text-lg font-semibold mb-4">Conversión por Ciudad</h3>
-      {/* Implement your chart here using recharts */}
-    </CardContent>
-  </Card>
-);
-
-const StatusPieChart = ({ data, title }) => (
-  <Card>
-    <CardContent className="p-6">
-      <h3 className="text-lg font-semibold mb-4">{title}</h3>
-      {/* Implement your pie chart here using recharts */}
-    </CardContent>
-  </Card>
-);
-
-const TimeSeriesChart = ({ data, title }) => (
-  <Card>
-    <CardContent className="p-6">
-      <h3 className="text-lg font-semibold mb-4">{title}</h3>
-      {/* Implement your time series chart here using recharts */}
-    </CardContent>
-  </Card>
-);
-
-export const Dashboard = ({ data }) => {
+export default function Dashboard({ data }: DashboardProps) {
     const { 
         filteredData, 
         stats, 
         updateFilters 
     } = useStats(data);
-
-    const handleDateChange = (start, end) => {
+    
+    const handleDateChange = (start: string, end: string) => {
         updateFilters({ fechaInicio: start, fechaFin: end });
     };
 
-    const handleCityChange = (city) => {
+    const handleCityChange = (city: string) => {
         updateFilters({ ciudad: city === 'todas' ? undefined : city });
     };
 
-    const handleStatusChange = (status) => {
+    const handleStatusChange = (status: string) => {
         updateFilters({ estado: status === 'todos' ? undefined : status });
     };
 
-    const conversionData = [
+    // Memoizar los datos transformados
+    const conversionData = useMemo(() => [
         {
             ciudad: 'Bucaramanga',
             usuarios: data.bucaramanga.chatUsers,
@@ -88,29 +81,33 @@ export const Dashboard = ({ data }) => {
             telefonos: data.bogota.validPhones,
             conversiones: data.bogota.conversiones
         }
-    ];
+    ], [data]);
 
-    const getBucaStatusData = Object.entries(data.bucaramanga.estados).map(([name, value]) => ({
-        name,
-        value
-    }));
+    const bucaStatusData = useMemo(() => 
+        Object.entries(data.bucaramanga.estados).map(([name, value]) => ({
+            name,
+            value
+        }))
+    , [data.bucaramanga.estados]);
 
-    const getBogStatusData = Object.entries(data.bogota.estados).map(([name, value]) => ({
-        name,
-        value
-    }));
+    const bogStatusData = useMemo(() => 
+        Object.entries(data.bogota.estados).map(([name, value]) => ({
+            name,
+            value
+        }))
+    , [data.bogota.estados]);
 
     const today = new Date().toISOString().split('T')[0];
     const lastMonth = new Date();
     lastMonth.setMonth(lastMonth.getMonth() - 1);
 
-    const todayUsers = filteredData.filter(user => 
-        user.fecha.startsWith(today)
-    );
+    const todayUsers = useMemo(() => 
+        filteredData.filter(user => user.fecha.startsWith(today))
+    , [filteredData, today]);
 
-    const monthUsers = filteredData.filter(user => 
-        new Date(user.fecha) >= lastMonth
-    );
+    const monthUsers = useMemo(() => 
+        filteredData.filter(user => new Date(user.fecha) >= lastMonth)
+    , [filteredData, lastMonth]);
 
     return (
         <div className="p-4 md:p-8 bg-gray-50 min-h-screen">
@@ -157,37 +154,53 @@ export const Dashboard = ({ data }) => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-                <ConversionChart data={conversionData} />
+                <Suspense fallback={<LoadingChart />}>
+                    <div className="w-full">
+                        <ConversionChart data={conversionData} />
+                    </div>
+                </Suspense>
                 
                 <div className="grid grid-rows-2 gap-8">
-                    <StatusPieChart 
-                        data={getBucaStatusData} 
-                        title="Estados en Bucaramanga" 
-                    />
-                    <StatusPieChart 
-                        data={getBogStatusData} 
-                        title="Estados en Bogotá" 
-                    />
+                    <Suspense fallback={<LoadingChart />}>
+                        <div className="w-full">
+                            <StatusPieChart 
+                                data={getBucaStatusData} 
+                                title="Estados en Bucaramanga" 
+                            />
+                        </div>
+                    </Suspense>
+                    <Suspense fallback={<LoadingChart />}>
+                        <div className="w-full">
+                            <StatusPieChart 
+                                data={getBogStatusData} 
+                                title="Estados en Bogotá" 
+                            />
+                        </div>
+                    </Suspense>
                 </div>
             </div>
 
-            <TimeSeriesChart
-                data={data.global.dailyStats}
-                title="Evolución Diaria de Usuarios"
-            />
+            <Suspense fallback={<LoadingChart />}>
+                <div className="w-full">
+                    <TimeSeriesChart
+                        data={data.global.dailyStats}
+                        title="Evolución Diaria de Usuarios"
+                    />
+                </div>
+            </Suspense>
 
-            <div className="space-y-8">
+            <div className="space-y-8 mt-8">
                 <Card>
                     <CardContent>
                         <h3 className="text-xl font-semibold mb-4">Usuarios del Día ({todayUsers.length})</h3>
-                        {/* Implement user table here */}
+                        {/* UserTable Component aquí */}
                     </CardContent>
                 </Card>
                 
                 <Card>
                     <CardContent>
                         <h3 className="text-xl font-semibold mb-4">Usuarios del Mes ({monthUsers.length})</h3>
-                        {/* Implement user table here */}
+                        {/* UserTable Component aquí */}
                     </CardContent>
                 </Card>
             </div>

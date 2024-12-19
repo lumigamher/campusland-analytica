@@ -1,12 +1,14 @@
 import * as XLSX from 'xlsx';
 import { 
-    AnalysisResult, 
-    ChatData, 
-    StudentData, 
+    AnalysisResult,
+    ChatData,
+    StudentData,
     UserData,
     DailyStats,
     MonthlyStats,
-    ProcessedStats
+    ProcessedStats,
+    CityAnalysis,
+    GlobalAnalysis
 } from '../types';
 
 const normalizarTelefono = (telefono: string | number | null): string | null => {
@@ -18,20 +20,52 @@ const normalizarTelefono = (telefono: string | number | null): string | null => 
     return numero.length === 10 && numero.startsWith('3') ? numero : null;
 };
 
-const procesarUsuarios = (chatData: ChatData, ciudad: string): UserData[] => {
-    return chatData.users.map(user => ({
-        userId: user['User ID'],
-        nombre: user['Username'],
-        edad: user['Age'] || null,
-        celular: normalizarTelefono(user['Phone Number']) || '',
-        fecha: user['Time'],
-        ciudad,
-        registrado: false,
-        estado: undefined
-    }));
+const formatearFecha = (fecha: string | number | Date): string => {
+    try {
+        if (typeof fecha === 'number') {
+            // Convertir número de serie de Excel a fecha
+            const excelDate = XLSX.SSF.parse_date_code(fecha);
+            return new Date(
+                excelDate.y,
+                excelDate.m - 1,
+                excelDate.d,
+                excelDate.H || 0,
+                excelDate.M || 0,
+                excelDate.S || 0
+            ).toISOString();
+        }
+
+        const dateObj = fecha instanceof Date ? fecha : new Date(fecha);
+        if (isNaN(dateObj.getTime())) {
+            throw new Error('Fecha inválida');
+        }
+        return dateObj.toISOString();
+    } catch (error) {
+        console.error('Error al formatear fecha:', fecha, error);
+        return new Date().toISOString();
+    }
 };
 
-const calcularEstadisticas = (usuarios: UserData[], totalRegistros: number): ProcessedStats => {
+const procesarUsuarios = (chatData: ChatData, ciudad: string): UserData[] => {
+    return chatData.users.map(user => {
+        try {
+            return {
+                userId: user['User ID'],
+                nombre: user['Username'],
+                edad: typeof user['Age'] === 'number' ? user['Age'] : null,
+                celular: normalizarTelefono(user['Phone Number']) || '',
+                fecha: formatearFecha(user['Time']),
+                ciudad,
+                registrado: false
+            } as UserData;
+        } catch (error) {
+            console.error('Error al procesar usuario:', user, error);
+            return null;
+        }
+    }).filter((user): user is UserData => user !== null);
+};
+
+const calcularEstadisticas = (usuarios: UserData[]): ProcessedStats => {
     const dailyStats = new Map<string, {
         interacciones: number;
         usuarios: Set<number>;
@@ -45,35 +79,41 @@ const calcularEstadisticas = (usuarios: UserData[], totalRegistros: number): Pro
     }>();
 
     usuarios.forEach(user => {
-        const fecha = new Date(user.fecha);
-        const diaKey = fecha.toISOString().split('T')[0];
-        const mesKey = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`;
+        try {
+            const fecha = new Date(user.fecha);
+            if (isNaN(fecha.getTime())) return;
 
-        // Estadísticas diarias
-        if (!dailyStats.has(diaKey)) {
-            dailyStats.set(diaKey, {
-                interacciones: 0,
-                usuarios: new Set(),
-                conversiones: 0
-            });
-        }
-        const diaStats = dailyStats.get(diaKey)!;
-        diaStats.interacciones++;
-        diaStats.usuarios.add(user.userId);
-        if (user.registrado) diaStats.conversiones++;
+            const diaKey = fecha.toISOString().split('T')[0];
+            const mesKey = `${fecha.getFullYear()}-${String(fecha.getMonth() + 1).padStart(2, '0')}`;
 
-        // Estadísticas mensuales
-        if (!monthlyStats.has(mesKey)) {
-            monthlyStats.set(mesKey, {
-                interacciones: 0,
-                usuarios: new Set(),
-                conversiones: 0
-            });
+            // Estadísticas diarias
+            if (!dailyStats.has(diaKey)) {
+                dailyStats.set(diaKey, {
+                    interacciones: 0,
+                    usuarios: new Set(),
+                    conversiones: 0
+                });
+            }
+            const diaStats = dailyStats.get(diaKey)!;
+            diaStats.interacciones++;
+            diaStats.usuarios.add(user.userId);
+            if (user.registrado) diaStats.conversiones++;
+
+            // Estadísticas mensuales
+            if (!monthlyStats.has(mesKey)) {
+                monthlyStats.set(mesKey, {
+                    interacciones: 0,
+                    usuarios: new Set(),
+                    conversiones: 0
+                });
+            }
+            const mesStats = monthlyStats.get(mesKey)!;
+            mesStats.interacciones++;
+            mesStats.usuarios.add(user.userId);
+            if (user.registrado) mesStats.conversiones++;
+        } catch (error) {
+            console.error('Error al procesar estadísticas para usuario:', user, error);
         }
-        const mesStats = monthlyStats.get(mesKey)!;
-        mesStats.interacciones++;
-        mesStats.usuarios.add(user.userId);
-        if (user.registrado) mesStats.conversiones++;
     });
 
     const processStats = <T extends DailyStats | MonthlyStats>(
@@ -87,7 +127,8 @@ const calcularEstadisticas = (usuarios: UserData[], totalRegistros: number): Pro
                 totalInteracciones: value.interacciones,
                 usuariosUnicos: value.usuarios.size,
                 conversiones: value.conversiones,
-                tasaConversion: (value.conversiones / value.usuarios.size) * 100
+                tasaConversion: value.usuarios.size > 0 ? 
+                    (value.conversiones / value.usuarios.size) * 100 : 0
             })) as T[];
     };
 
@@ -97,12 +138,51 @@ const calcularEstadisticas = (usuarios: UserData[], totalRegistros: number): Pro
     };
 };
 
-const getEstados = (estudiantes: StudentData[]): Record<string, number> => {
-    return estudiantes.reduce((acc: Record<string, number>, e) => {
+const procesarCiudad = (
+    usuarios: UserData[],
+    estudiantes: StudentData[]
+): CityAnalysis => {
+    const telefonosRegistrados = new Set(
+        estudiantes.map(e => normalizarTelefono(e.Celular)).filter(Boolean)
+    );
+
+    // Marcar usuarios registrados y asignar estados
+    usuarios.forEach(user => {
+        if (user.celular && telefonosRegistrados.has(user.celular)) {
+            user.registrado = true;
+            const estudiante = estudiantes.find(e => 
+                normalizarTelefono(e.Celular) === user.celular
+            );
+            if (estudiante) {
+                user.estado = estudiante.Estado;
+                try {
+                    user.fechaRegistro = formatearFecha(estudiante['Fecha registro']);
+                } catch (error) {
+                    console.warn('Error al formatear fecha de registro:', estudiante['Fecha registro']);
+                }
+            }
+        }
+    });
+
+    const stats = calcularEstadisticas(usuarios);
+    const estados = estudiantes.reduce((acc: Record<string, number>, e) => {
         const estado = e.Estado || 'Sin Estado';
         acc[estado] = (acc[estado] || 0) + 1;
         return acc;
     }, {});
+
+    return {
+        chatUsers: usuarios.length,
+        validPhones: usuarios.filter(u => u.celular).length,
+        registros: estudiantes.length,
+        conversiones: usuarios.filter(u => u.registrado).length,
+        tasaConversion: usuarios.length > 0 ? 
+            (usuarios.filter(u => u.registrado).length / usuarios.length) * 100 : 0,
+        estados,
+        dailyStats: stats.daily,
+        monthlyStats: stats.monthly,
+        usuarios
+    };
 };
 
 export const processExcelFiles = async (
@@ -116,27 +196,34 @@ export const processExcelFiles = async (
             const buffer = await file.arrayBuffer();
             const workbook = XLSX.read(buffer, {
                 cellDates: true,
+                dateNF: 'yyyy-mm-dd hh:mm:ss',
                 cellNF: true,
-                cellText: true
+                cellText: false
             });
 
             if (file.name.toLowerCase().includes('informe')) {
-                // Es un archivo de chat
-                const chat = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
-                const users = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[1]]);
-                return { chat, users } as ChatData;
+                const chat = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {
+                    raw: false,
+                    dateNF: 'yyyy-mm-dd hh:mm:ss'
+                }) as ChatData['chat'];
+                const users = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[1]], {
+                    raw: false,
+                    dateNF: 'yyyy-mm-dd hh:mm:ss'
+                }) as ChatData['users'];
+                return { chat, users };
             } else {
-                // Es un archivo de estudiantes
-                return XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]) as StudentData[];
+                return XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {
+                    raw: false,
+                    dateNF: 'yyyy-mm-dd'
+                }) as StudentData[];
             }
         } catch (error) {
-            console.error('Error al leer archivo Excel:', error);
-            throw new Error(`Error al procesar el archivo ${file.name}`);
+            console.error('Error al leer archivo Excel:', error, file.name);
+            throw new Error(`Error al procesar el archivo ${file.name}: ${error.message}`);
         }
     };
 
     try {
-        // Leer todos los archivos
         const [chatBuca, chatBog, estBuca, estBog] = await Promise.all([
             readExcelFile(chatBucaFile) as Promise<ChatData>,
             readExcelFile(chatBogFile) as Promise<ChatData>,
@@ -144,91 +231,29 @@ export const processExcelFiles = async (
             readExcelFile(estBogFile) as Promise<StudentData[]>
         ]);
 
-        // Procesar usuarios
         const usuariosBuca = procesarUsuarios(chatBuca, 'Bucaramanga');
         const usuariosBog = procesarUsuarios(chatBog, 'Bogotá');
 
-        // Procesar teléfonos registrados
-        const telefonosRegBuca = new Set(
-            estBuca.map(e => normalizarTelefono(e.Celular)).filter(Boolean)
-        );
-        const telefonosRegBog = new Set(
-            estBog.map(e => normalizarTelefono(e.Celular)).filter(Boolean)
-        );
+        const bucaramanga = procesarCiudad(usuariosBuca, estBuca);
+        const bogota = procesarCiudad(usuariosBog, estBog);
 
-        // Marcar usuarios registrados y asignar estados
-        usuariosBuca.forEach(user => {
-            if (user.celular && telefonosRegBuca.has(user.celular)) {
-                user.registrado = true;
-                const estudiante = estBuca.find(e => 
-                    normalizarTelefono(e.Celular) === user.celular
-                );
-                if (estudiante) {
-                    user.estado = estudiante.Estado;
-                    user.fechaRegistro = estudiante['Fecha registro'];
-                }
-            }
-        });
+        const statsGlobal = calcularEstadisticas([...usuariosBuca, ...usuariosBog]);
 
-        usuariosBog.forEach(user => {
-            if (user.celular && telefonosRegBog.has(user.celular)) {
-                user.registrado = true;
-                const estudiante = estBog.find(e => 
-                    normalizarTelefono(e.Celular) === user.celular
-                );
-                if (estudiante) {
-                    user.estado = estudiante.Estado;
-                    user.fechaRegistro = estudiante['Fecha registro'];
-                }
-            }
-        });
+        const global: GlobalAnalysis = {
+            totalChatUsers: bucaramanga.chatUsers + bogota.chatUsers,
+            totalValidPhones: bucaramanga.validPhones + bogota.validPhones,
+            totalConversiones: bucaramanga.conversiones + bogota.conversiones,
+            totalRegistros: bucaramanga.registros + bogota.registros,
+            tasaConversionGlobal: (bucaramanga.conversiones + bogota.conversiones) / 
+                (bucaramanga.chatUsers + bogota.chatUsers) * 100,
+            dailyStats: statsGlobal.daily,
+            monthlyStats: statsGlobal.monthly
+        };
 
-        // Calcular estadísticas
-        const statsBuca = calcularEstadisticas(usuariosBuca, estBuca.length);
-        const statsBog = calcularEstadisticas(usuariosBog, estBog.length);
-        const statsGlobal = calcularEstadisticas(
-            [...usuariosBuca, ...usuariosBog],
-            estBuca.length + estBog.length
-        );
-
-        // Obtener estados
-        const estadosBuca = getEstados(estBuca);
-        const estadosBog = getEstados(estBog);
-
-        // Construir resultado final
         return {
-            bucaramanga: {
-                chatUsers: usuariosBuca.length,
-                validPhones: usuariosBuca.filter(u => u.celular).length,
-                registros: estBuca.length,
-                conversiones: usuariosBuca.filter(u => u.registrado).length,
-                tasaConversion: (usuariosBuca.filter(u => u.registrado).length / usuariosBuca.length) * 100,
-                estados: estadosBuca,
-                dailyStats: statsBuca.daily,
-                monthlyStats: statsBuca.monthly,
-                usuarios: usuariosBuca
-            },
-            bogota: {
-                chatUsers: usuariosBog.length,
-                validPhones: usuariosBog.filter(u => u.celular).length,
-                registros: estBog.length,
-                conversiones: usuariosBog.filter(u => u.registrado).length,
-                tasaConversion: (usuariosBog.filter(u => u.registrado).length / usuariosBog.length) * 100,
-                estados: estadosBog,
-                dailyStats: statsBog.daily,
-                monthlyStats: statsBog.monthly,
-                usuarios: usuariosBog
-            },
-            global: {
-                totalChatUsers: usuariosBuca.length + usuariosBog.length,
-                totalValidPhones: usuariosBuca.filter(u => u.celular).length + usuariosBog.filter(u => u.celular).length,
-                totalConversiones: usuariosBuca.filter(u => u.registrado).length + usuariosBog.filter(u => u.registrado).length,
-                totalRegistros: estBuca.length + estBog.length,
-                tasaConversionGlobal: ((usuariosBuca.filter(u => u.registrado).length + usuariosBog.filter(u => u.registrado).length) / 
-                    (usuariosBuca.length + usuariosBog.length)) * 100,
-                dailyStats: statsGlobal.daily,
-                monthlyStats: statsGlobal.monthly
-            }
+            bucaramanga,
+            bogota,
+            global
         };
     } catch (error) {
         console.error('Error en el procesamiento:', error);
